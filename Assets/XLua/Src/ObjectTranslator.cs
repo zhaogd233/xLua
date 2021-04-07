@@ -122,6 +122,24 @@ namespace XLua
         //无法访问的类，比如声明成internal，可以用其接口、基类的生成代码来访问
         private readonly Dictionary<Type, Type> aliasCfg = new Dictionary<Type, Type>();
 
+#if  UNITY_EDITOR && DEBUG_VERSION
+        private const string overriderMeta = @"
+        local value = CS['{0}']
+        local tab = getmetatable(value)
+        if tab ~= nil and clone ~= nil then
+            local newMetaTab = clone(tab)
+            newMetaTab.__index = function(table,key)
+                if tab ~= nil then
+            local result = tab.__index(table,key)
+                if result ~= nil then
+            return result
+                end
+            end
+                Logger.LogError('{0}没有导出该方法/属性，定义的地方加一下白名单[whiteList]标签或者配置LuaBindingWhiteList.cs '..key)
+            end
+            setmetatable(value,newMetaTab)
+        end";
+#endif
         public void DelayWrapLoader(Type type, Action<RealStatePtr> loader)
         {
             delayWrap[type] = loader;
@@ -135,12 +153,13 @@ namespace XLua
         Dictionary<Type, bool> loaded_types = new Dictionary<Type, bool>();
         public bool TryDelayWrapLoader(RealStatePtr L, Type type)
         {
+            //GameProfiler.BeginProfiler("WrapLoader"+type.Name);
             if (loaded_types.ContainsKey(type)) return true;
             loaded_types.Add(type, true);
 
             LuaAPI.luaL_newmetatable(L, type.FullName); //先建一个metatable，因为加载过程可能会需要用到
             LuaAPI.lua_pop(L, 1);
-
+            
             Action<RealStatePtr> loader;
             int top = LuaAPI.lua_gettop(L);
             if (delayWrap.TryGetValue(type, out loader))
@@ -162,6 +181,7 @@ namespace XLua
                     Utils.ReflectionWrap(L, type, privateAccessibleFlags.Contains(type));
                 }
 #else
+                //Logger.LogError("无Wrap文件" + type + "</color>");
                 Utils.ReflectionWrap(L, type, privateAccessibleFlags.Contains(type));
 #endif
 #if NOT_GEN_WARNING
@@ -180,15 +200,18 @@ namespace XLua
                 throw new Exception("top change, before:" + top + ", after:" + LuaAPI.lua_gettop(L));
             }
 
-            foreach (var nested_type in type.GetNestedTypes(BindingFlags.Public))
+            // 加载类型内的类型，不主动去加载，如果有需要手动的添加到genConfig
+            /*foreach (var nested_type in type.GetNestedTypes(BindingFlags.Public))
             {
                 if (nested_type.IsGenericTypeDefinition())
                 {
                     continue;
                 }
                 GetTypeId(L, nested_type);
-            }
+            }*/
             
+
+            //GameProfiler.EndProfiler("WrapLoader"+type.Name);
             return true;
         }
         
@@ -557,6 +580,11 @@ namespace XLua
                 }
             }
             return true;
+        }
+        
+        public void ForceClearDelegateBrideReleased()
+        {
+            delegate_bridges.Clear();
         }
 
         public void ReleaseLuaBase(RealStatePtr L, int reference, bool is_delegate)
@@ -1094,7 +1122,13 @@ namespace XLua
 
                     typeIdMap.Add(type, type_id);
                 }
+
+#if  UNITY_EDITOR && DEBUG_VERSION
+                //覆盖metatable，增加无导出函数的报错
+                luaEnv.DoString(string.Format(overriderMeta,type.Name));
+#endif
             }
+
             return type_id;
         }
 
