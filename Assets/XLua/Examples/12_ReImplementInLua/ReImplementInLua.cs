@@ -59,11 +59,13 @@ namespace XLuaTest
                 __index = function(o, k)
                     --print('__index', k)
                     if ins_methods[k] then return ins_methods[k] end
-                    return fields_getters[k] and fields_getters[k](o)
+                    assert(fields_getters[k],'no such field ' .. k)
+                    return fields_getters[k](o)
                 end,
 
                 __newindex = function(o, k, v)
-                    return fields_setters[k] and fields_setters[k](o, v) or error('no such field ' .. k)
+                    assert(fields_setters[k],'no such field ' .. k)
+                    return fields_setters[k](o, v)
                 end,
 
                 __tostring = function(o)
